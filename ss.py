@@ -7,6 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.io import wavfile
 from project import MusicFingerprinter
+from db_loader import load_or_build_database
 import tempfile
 import os
 from collections import defaultdict
@@ -24,6 +25,12 @@ def get_fingerprinter():
     return MusicFingerprinter()
 
 fingerprinter = get_fingerprinter()
+
+# --- Auto-load the pre-indexed database that ships with this app ---
+# This runs once per deployment (cached) so the app works immediately for
+# graders/users without anyone having to manually re-upload the 50 songs.
+if 'database' not in st.session_state:
+    st.session_state.database = load_or_build_database()
 
 # Sidebar configuration
 st.sidebar.title("⚙️ Configuration")
@@ -44,67 +51,89 @@ tab1, tab2, tab2b, tab3 = st.tabs(["📚 Build Database", "🔍 Query & Identify
 
 # ==================== TAB 1: BUILD DATABASE ====================
 with tab1:
-    st.header("1. Build Song Database")
-    st.write("Upload audio files (.wav) to build the fingerprint database.")
-    
+    st.header("1. Song Database")
+
+    if st.session_state.get('database'):
+        st.success(
+            f"✅ A pre-indexed database shipped with this app is already loaded: "
+            f"**{len(st.session_state.database)} songs**. You can identify or "
+            f"batch-process clips right away in the other tabs."
+        )
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Songs in DB", len(st.session_state.database))
+        with col2:
+            total_fps = sum(len(fps) for fps in st.session_state.database.values())
+            st.metric("Total Fingerprints", total_fps)
+        with col3:
+            avg_fps = total_fps / len(st.session_state.database) if st.session_state.database else 0
+            st.metric("Avg FPs per Song", int(avg_fps))
+        st.divider()
+
+    st.subheader("Add / Rebuild From Your Own Files (optional)")
+    st.write("Upload audio files (.wav or .mp3) to add to, or rebuild, the fingerprint database.")
+
     # File upload
     uploaded_files = st.file_uploader(
-        "Upload WAV files",
-        type=['wav'],
+        "Upload audio files",
+        type=['wav', 'mp3'],
         accept_multiple_files=True,
-        help="Select one or more .wav files to add to the database"
+        help="Select one or more .wav/.mp3 files to add to the database"
     )
-    
+
     # Create database
     if uploaded_files:
-        if st.button("🔨 Build Database", key="build_db"):
+        if st.button("🔨 Build Database From Uploads", key="build_db"):
             st.info("Building database from uploaded files...")
-            
+
             # Create temporary directory for uploaded files
             temp_dir = tempfile.mkdtemp()
-            
+
             # Save uploaded files
             for uploaded_file in uploaded_files:
                 file_path = os.path.join(temp_dir, uploaded_file.name)
                 with open(file_path, 'wb') as f:
                     f.write(uploaded_file.getbuffer())
-            
+
             # Build database
+            audio_ext = ('.wav', '.mp3')
+            valid_files = [f for f in os.listdir(temp_dir) if f.lower().endswith(audio_ext)]
             progress_bar = st.progress(0)
             database = {}
-            
-            for idx, filename in enumerate(os.listdir(temp_dir)):
-                if filename.endswith('.wav'):
-                    filepath = os.path.join(temp_dir, filename)
-                    song_name = os.path.splitext(filename)[0]
-                    
-                    try:
-                        audio, sr = fingerprinter.load_audio(filepath)
-                        frequencies, times, magnitude = fingerprinter.compute_spectrogram(audio, sr)
-                        peaks = fingerprinter.find_peaks(magnitude, frequencies, threshold_db)
-                        
-                        if use_pairs:
-                            fingerprints = fingerprinter.create_fingerprint_pairs(peaks, frequencies, times)
-                        else:
-                            fingerprints = fingerprinter.create_single_peak_fingerprints(peaks, frequencies, times)
-                        
-                        # Build hash map
-                        database[song_name] = defaultdict(list)
-                        for fp in fingerprints:
-                            fp_hash = hash(fp) % (10 ** 9)
-                            database[song_name][fp_hash].append(0)  # Simplified offset tracking
-                        
-                        database[song_name] = dict(database[song_name])
-                        
-                        progress_bar.progress((idx + 1) / len([f for f in os.listdir(temp_dir) if f.endswith('.wav')]))
-                        
-                    except Exception as e:
-                        st.error(f"Error processing {song_name}: {e}")
-            
+
+            for idx, filename in enumerate(valid_files):
+                filepath = os.path.join(temp_dir, filename)
+                song_name = os.path.splitext(filename)[0]
+
+                try:
+                    audio, sr = fingerprinter.load_audio(filepath)
+                    frequencies, times, magnitude = fingerprinter.compute_spectrogram(audio, sr)
+                    peaks = fingerprinter.find_peaks(magnitude, frequencies, threshold_db)
+
+                    if use_pairs:
+                        fingerprints = fingerprinter.create_fingerprint_pairs(peaks, frequencies, times)
+                    else:
+                        fingerprints = fingerprinter.create_single_peak_fingerprints(peaks, frequencies, times)
+
+                    # Build hash map, storing the REAL anchor time of each
+                    # fingerprint occurrence (not a hardcoded placeholder) so
+                    # matching can vote on a consistent time offset.
+                    database[song_name] = defaultdict(list)
+                    for fp, anchor_time_sec in fingerprints:
+                        fp_hash = hash(fp) % (10 ** 9)
+                        database[song_name][fp_hash].append(anchor_time_sec)
+
+                    database[song_name] = dict(database[song_name])
+
+                    progress_bar.progress((idx + 1) / len(valid_files))
+
+                except Exception as e:
+                    st.error(f"Error processing {song_name}: {e}")
+
             st.session_state.database = database
             st.session_state.temp_dir = temp_dir
             st.success(f"✅ Database built! {len(database)} songs indexed.")
-            
+
             # Display database statistics
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -128,8 +157,8 @@ with tab2:
         with col1:
             st.subheader("Upload Query Clip")
             query_file = st.file_uploader(
-                "Upload a WAV file to identify",
-                type=['wav'],
+                "Upload a WAV or MP3 file to identify",
+                type=['wav', 'mp3'],
                 key='query_upload'
             )
         
@@ -140,8 +169,10 @@ with tab2:
         
         if query_file:
             if st.button("🔎 Identify Song", key="identify"):
-                # Save and process query
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp:
+                # Save and process query (suffix must match the real file type
+                # so load_audio picks the right decoder for .wav vs .mp3)
+                query_suffix = os.path.splitext(query_file.name)[1] or '.wav'
+                with tempfile.NamedTemporaryFile(delete=False, suffix=query_suffix) as tmp:
                     tmp.write(query_file.getbuffer())
                     query_path = tmp.name
                 
@@ -227,15 +258,23 @@ with tab2:
                         
                         # Offset histogram for best match
                         st.subheader("📈 Offset Histogram (Best Match)")
+                        st.caption(
+                            "Each bar is a time offset (query time vs. database time) at which a "
+                            "fingerprint hash matched. A genuine match produces one tall, sharp "
+                            "spike (all matching hashes agree on the same alignment); a wrong "
+                            "song produces short, scattered bars at random offsets."
+                        )
                         if results[best_song]['offset_histogram']:
                             histogram = results[best_song]['offset_histogram']
                             fig = plt.figure(figsize=(10, 5))
-                            offsets = list(histogram.keys())
-                            counts = list(histogram.values())
-                            plt.bar(offsets, counts, width=0.8, alpha=0.7, color='green')
-                            plt.xlabel('Time Offset')
+                            offsets = sorted(histogram.keys())
+                            counts = [histogram[o] for o in offsets]
+                            plt.bar(offsets, counts, width=0.15, alpha=0.8, color='green')
+                            plt.xlabel('Time Offset (s) = db_time − query_time')
                             plt.ylabel('Number of Matching Fingerprints')
-                            plt.title(f'Alignment for "{best_song}"')
+                            best_offset = results[best_song]['best_offset']
+                            plt.title(f'Alignment for "{best_song}"  (peak offset ≈ {best_offset:.1f}s, '
+                                      f'score = {results[best_song]["score"]})')
                             plt.tight_layout()
                             st.pyplot(fig)
                         
@@ -268,8 +307,8 @@ with tab2b:
     else:
         st.subheader("Upload Query Clips (Batch)")
         batch_files = st.file_uploader(
-            "Upload multiple WAV files for batch processing",
-            type=['wav'],
+            "Upload multiple WAV or MP3 files for batch processing",
+            type=['wav', 'mp3'],
             accept_multiple_files=True,
             key='batch_upload'
         )

@@ -52,9 +52,9 @@ def build_database(use_pairs=True, threshold_db=10):
             
             # Build hash map
             database[song_name] = defaultdict(list)
-            for fp in fingerprints:
+            for fp, anchor_time_sec in fingerprints:
                 fp_hash = hash(fp) % (10 ** 9)
-                database[song_name][fp_hash].append(0)
+                database[song_name][fp_hash].append(anchor_time_sec)
             
             database[song_name] = dict(database[song_name])
             

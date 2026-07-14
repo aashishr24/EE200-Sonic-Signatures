@@ -43,9 +43,9 @@ def main():
         pairs = fp.create_fingerprint_pairs(peaks, frequencies, times)
         
         database[song_name] = defaultdict(list)
-        for fingerprint in pairs:
+        for fingerprint, anchor_time_sec in pairs:
             fp_hash = hash(fingerprint) % (10 ** 9)
-            database[song_name][fp_hash].append(0)
+            database[song_name][fp_hash].append(anchor_time_sec)
         
         database[song_name] = dict(database[song_name])
         print(f" ✓ ({len(pairs)} fingerprints)")
@@ -287,9 +287,9 @@ def main():
         singles = fp.create_single_peak_fingerprints(peaks, frequencies, times)
         
         database_singles[song_name] = defaultdict(list)
-        for fingerprint in singles:
+        for fingerprint, anchor_time_sec in singles:
             fp_hash = hash(fingerprint) % (10 ** 9)
-            database_singles[song_name][fp_hash].append(0)
+            database_singles[song_name][fp_hash].append(anchor_time_sec)
         
         database_singles[song_name] = dict(database_singles[song_name])
     

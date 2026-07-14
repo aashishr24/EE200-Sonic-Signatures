@@ -101,9 +101,9 @@ def main():
         # Store in database
         from collections import defaultdict
         database[song_name] = defaultdict(list)
-        for fp in pairs:
+        for fp, anchor_time_sec in pairs:
             fp_hash = hash(fp) % (10 ** 9)
-            database[song_name][fp_hash].append(0)
+            database[song_name][fp_hash].append(anchor_time_sec)
         database[song_name] = dict(database[song_name])
     
     print(f"\n  Database complete: {len(database)} songs indexed")

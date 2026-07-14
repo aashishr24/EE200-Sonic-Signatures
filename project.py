@@ -44,22 +44,73 @@ class MusicFingerprinter:
         self.max_freq_bin = int(freq_max * n_fft / target_sr)
     
     def load_audio(self, filepath: str) -> Tuple[np.ndarray, int]:
-        """Load audio file and return normalized waveform and sample rate."""
-        try:
-            sr, audio = wavfile.read(filepath)
-            # Normalize to [-1, 1]
-            if audio.dtype == np.int16:
-                audio = audio.astype(np.float32) / 32768.0
-            elif audio.dtype == np.int32:
-                audio = audio.astype(np.float32) / 2147483648.0
-            
-            # Convert stereo to mono if needed
+        """
+        Load audio file and return normalized mono waveform and sample rate.
+        Supports .wav natively; supports .mp3 and other compressed formats
+        via pydub+ffmpeg (falls back gracefully with a clear error if that
+        backend isn't available).
+        """
+        ext = os.path.splitext(filepath)[1].lower()
+
+        if ext == '.wav':
+            try:
+                sr, audio = wavfile.read(filepath)
+            except Exception as e:
+                raise ValueError(f"Error loading audio file {filepath}: {e}")
+        else:
+            # Non-WAV (e.g. .mp3, .m4a, .flac) -> decode via pydub/ffmpeg
+            try:
+                from pydub import AudioSegment
+            except ImportError as e:
+                raise ValueError(
+                    f"Cannot load '{filepath}': non-WAV formats require the "
+                    f"'pydub' package (and ffmpeg installed on the system). "
+                    f"Install with `pip install pydub` and ensure ffmpeg is "
+                    f"on PATH. Original error: {e}"
+                )
+            try:
+                seg = AudioSegment.from_file(filepath)
+                sr = seg.frame_rate
+                samples = np.array(seg.get_array_of_samples())
+                if seg.channels > 1:
+                    samples = samples.reshape((-1, seg.channels))
+                # Normalize based on sample width (pydub gives ints)
+                max_val = float(1 << (8 * seg.sample_width - 1))
+                audio = samples.astype(np.float32) / max_val
+            except Exception as e:
+                raise ValueError(f"Error loading audio file {filepath}: {e}")
+            # Convert stereo to mono if needed (post-pydub path uses raw ints,
+            # normalize separately below along with the wav path)
             if len(audio.shape) > 1:
                 audio = np.mean(audio, axis=1)
-            
-            return audio, sr
-        except Exception as e:
-            raise ValueError(f"Error loading audio file {filepath}: {e}")
+            # Resample to target_sr for consistency across the whole database
+            if sr != self.target_sr:
+                num_samples = int(len(audio) * self.target_sr / sr)
+                audio = signal.resample(audio, num_samples)
+                sr = self.target_sr
+            return audio.astype(np.float32), sr
+
+        # --- WAV-specific normalization ---
+        if audio.dtype == np.int16:
+            audio = audio.astype(np.float32) / 32768.0
+        elif audio.dtype == np.int32:
+            audio = audio.astype(np.float32) / 2147483648.0
+        elif audio.dtype == np.uint8:
+            audio = (audio.astype(np.float32) - 128.0) / 128.0
+        else:
+            audio = audio.astype(np.float32)
+
+        # Convert stereo to mono if needed
+        if len(audio.shape) > 1:
+            audio = np.mean(audio, axis=1)
+
+        # Resample to target_sr if the file doesn't already match
+        if sr != self.target_sr:
+            num_samples = int(len(audio) * self.target_sr / sr)
+            audio = signal.resample(audio, num_samples)
+            sr = self.target_sr
+
+        return audio, sr
     
     def compute_spectrogram(self, audio: np.ndarray, sr: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
@@ -197,33 +248,42 @@ class MusicFingerprinter:
             max_time_gap: Maximum time gap for a valid pair
             
         Returns:
-            List of (freq1_quantized, freq2_quantized, delta_t_quantized) tuples
+            List of ((freq1_quantized, freq2_quantized, delta_t_quantized), anchor_time_sec)
+            tuples. anchor_time_sec is the absolute time (in seconds, from `times`)
+            of the FIRST peak in the pair -- this is what lets matching later compute
+            a real time offset between a query clip and a database song.
         """
         fingerprints = []
-        
+
         if len(peaks) < 2:
             return fingerprints
-        
+
+        # Sort by time so "nearby peaks" genuinely means nearby in time,
+        # not just adjacent in whatever order find_peaks emitted them.
+        sorted_peaks = sorted(peaks, key=lambda p: (p[1], p[0]))
+
         # Quantize frequencies to reduce noise
         freq_resolution = 25  # Hz
         time_resolution = 1   # Number of STFT frames
-        
-        for i, (f1, t1) in enumerate(peaks):
+
+        for i, (f1, t1) in enumerate(sorted_peaks):
             freq1_hz = frequencies[f1]
             freq1_q = int(freq1_hz / freq_resolution)
-            
-            # Look ahead at nearby peaks
-            for j in range(i + 1, min(i + anchor_gap, len(peaks))):
-                f2, t2 = peaks[j]
+            anchor_time_sec = float(times[t1])
+
+            # Look ahead at nearby peaks (in time-sorted order)
+            for j in range(i + 1, min(i + anchor_gap, len(sorted_peaks))):
+                f2, t2 = sorted_peaks[j]
                 freq2_hz = frequencies[f2]
                 freq2_q = int(freq2_hz / freq_resolution)
-                
+
                 delta_t = t2 - t1
-                
+
                 if 0 < delta_t <= max_time_gap:
                     delta_t_q = int(delta_t / time_resolution)
-                    fingerprints.append((freq1_q, freq2_q, delta_t_q))
-        
+                    fp = (freq1_q, freq2_q, delta_t_q)
+                    fingerprints.append((fp, anchor_time_sec))
+
         return fingerprints
     
     def create_single_peak_fingerprints(self, peaks: List[Tuple[int, int]], 
@@ -239,17 +299,20 @@ class MusicFingerprinter:
             time_resolution: Quantization level for time (in frames)
             
         Returns:
-            List of (freq_quantized, time_quantized) tuples
+            List of ((freq_quantized, time_quantized), anchor_time_sec) tuples.
+            anchor_time_sec is the absolute time (seconds) of the peak, used
+            for real offset tracking during matching (see create_fingerprint_pairs).
         """
         fingerprints = []
         freq_resolution = 25  # Hz
-        
+
         for f, t in peaks:
             freq_hz = frequencies[f]
             freq_q = int(freq_hz / freq_resolution)
             time_q = int(t / time_resolution)
-            fingerprints.append((freq_q, time_q))
-        
+            anchor_time_sec = float(times[t])
+            fingerprints.append(((freq_q, time_q), anchor_time_sec))
+
         return fingerprints
     
     def build_database(self, audio_dir: str, use_pairs: bool = True) -> Dict:
@@ -264,38 +327,38 @@ class MusicFingerprinter:
             Database dictionary: {song_name: {fingerprint_hash: [time_offsets]}}
         """
         database = {}
-        
+        supported_ext = ('.wav', '.mp3', '.m4a', '.flac', '.ogg')
+
         for filename in os.listdir(audio_dir):
-            if filename.endswith('.wav'):
+            if filename.lower().endswith(supported_ext):
                 filepath = os.path.join(audio_dir, filename)
                 song_name = os.path.splitext(filename)[0]
-                
+
                 print(f"Processing {song_name}...")
-                
+
                 try:
                     audio, sr = self.load_audio(filepath)
                     frequencies, times, magnitude = self.compute_spectrogram(audio, sr)
                     peaks = self.find_peaks(magnitude, frequencies)
-                    
+
                     if use_pairs:
                         fingerprints = self.create_fingerprint_pairs(peaks, frequencies, times)
                     else:
                         fingerprints = self.create_single_peak_fingerprints(peaks, frequencies, times)
-                    
-                    # Hash fingerprints and store with time offsets
+
+                    # Hash fingerprints and store with the REAL anchor time (seconds)
+                    # for each occurrence, so matching can later check that many
+                    # hashes agree on one consistent time offset.
                     database[song_name] = defaultdict(list)
-                    for fp in fingerprints:
+                    for fp, anchor_time_sec in fingerprints:
                         fp_hash = hash(fp) % (10 ** 9)  # Simple hash
-                        # For pairs: store the time of the first peak
-                        # For singles: store the time
-                        time_offset = 0  # Simplified; in real implementation would track actual times
-                        database[song_name][fp_hash].append(time_offset)
-                    
+                        database[song_name][fp_hash].append(anchor_time_sec)
+
                     database[song_name] = dict(database[song_name])
-                    
+
                 except Exception as e:
                     print(f"Error processing {song_name}: {e}")
-        
+
         return database
     
     def match_query(self, query_audio: np.ndarray, query_sr: int, 
@@ -312,36 +375,58 @@ class MusicFingerprinter:
         Returns:
             Match results: {song_name: {'score': int, 'offset_histogram': dict}}
         """
-        # Extract fingerprints from query
+        # Extract fingerprints from query, each with its own anchor time
         frequencies, times, magnitude = self.compute_spectrogram(query_audio, query_sr)
         peaks = self.find_peaks(magnitude, frequencies)
-        
+
         if use_pairs:
             query_fps = self.create_fingerprint_pairs(peaks, frequencies, times)
         else:
             query_fps = self.create_single_peak_fingerprints(peaks, frequencies, times)
-        
+
+        # Bin width (seconds) used to quantize offsets before voting. This
+        # absorbs small STFT-frame jitter while still keeping a true match's
+        # votes tightly clustered around one offset.
+        offset_bin_sec = 0.2
+
         results = {}
-        
+
         for song_name, song_fingerprints in database.items():
             offset_histogram = defaultdict(int)
-            
-            for query_fp in query_fps:
+            total_hash_matches = 0
+
+            for query_fp, query_time in query_fps:
                 query_hash = hash(query_fp) % (10 ** 9)
-                
-                if query_hash in song_fingerprints:
-                    # Found a match - this fingerprint exists in the song
-                    # Increment the count at offset 0 (simplified)
-                    offset_histogram[0] += 1
-            
-            # Score is the number of matching fingerprints
-            score = sum(offset_histogram.values())
+
+                db_times = song_fingerprints.get(query_hash)
+                if db_times:
+                    total_hash_matches += len(db_times)
+                    for db_time in db_times:
+                        # How far into the DB song this hash occurred, relative
+                        # to how far into the query clip the same hash occurred.
+                        # For a genuine match, this value should be (almost) the
+                        # SAME for every matching hash -> a sharp spike.
+                        # For a wrong song, coincidental hash collisions land at
+                        # essentially random offsets -> a flat, scattered histogram.
+                        offset = db_time - query_time
+                        offset_bin = round(offset / offset_bin_sec) * offset_bin_sec
+                        offset_histogram[offset_bin] += 1
+
+            # The real Shazam-style score: the height of the TALLEST bin in the
+            # offset histogram, i.e. how many hashes agree on one consistent
+            # alignment -- not just the raw number of hash collisions.
+            score = max(offset_histogram.values()) if offset_histogram else 0
+            best_offset = (max(offset_histogram, key=offset_histogram.get)
+                           if offset_histogram else None)
+
             results[song_name] = {
                 'score': score,
                 'offset_histogram': dict(offset_histogram),
+                'best_offset': best_offset,
+                'total_hash_matches': total_hash_matches,
                 'num_query_peaks': len(query_fps)
             }
-        
+
         return results
     
     def plot_offset_histogram(self, results: Dict[str, Dict], best_match: str = None) -> None:

@@ -116,9 +116,9 @@ for song_name, data in test_data.items():
     pairs = fp.create_fingerprint_pairs(peaks, frequencies, times)
     
     db_entry = defaultdict(list)
-    for fingerprint in pairs:
+    for fingerprint, anchor_time_sec in pairs:
         fp_hash = hash(fingerprint) % (10 ** 9)
-        db_entry[fp_hash].append(0)
+        db_entry[fp_hash].append(anchor_time_sec)
     
     database[song_name] = dict(db_entry)
     print(f"  {song_name:20s}: {len(pairs):6d} fingerprints")
