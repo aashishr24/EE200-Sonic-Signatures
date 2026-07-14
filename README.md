@@ -2,6 +2,21 @@
 
 A Shazam-like music identification system that uses spectral fingerprints to identify songs from audio clips.
 
+**🎵 Live demo: [musicashish.streamlit.app](https://musicashish.streamlit.app)**
+*(pre-loaded with a 50-song database — try Query & Identify or Batch Mode directly, no setup needed)*
+
+> **Engineering note:** the matching algorithm originally had a subtle bug where
+> the time-alignment ("offset") between a query clip and a database song was
+> never actually tracked — it was hardcoded to zero, silently reducing the
+> whole system to a raw hash-collision counter instead of true Shazam-style
+> alignment matching. I found this by testing against real noisy audio (it
+> was misidentifying songs at surprisingly mild noise levels), traced it to
+> the scoring logic, and fixed it to compute a real per-hash time offset and
+> score by the tallest bin in the resulting histogram. That took noise
+> robustness from failing at ~25dB SNR up to correct identification down to
+> 0dB SNR on the real song database. Full before/after details in
+> [`FIXES.md`](FIXES.md).
+
 ## Project Overview
 
 This project implements a complete music identification pipeline inspired by Shazam's technology:
@@ -12,15 +27,17 @@ This project implements a complete music identification pipeline inspired by Sha
 - **Fingerprinting**: Create robust fingerprints using:
   - **Peak Pairs**: Hash combinations of nearby frequency peaks (more selective)
   - **Single Peaks**: Simple frequency-time tuples (baseline)
-- **Database Matching**: Store fingerprints and match query clips using offset histograms
+- **Database Matching**: Store fingerprints and match query clips using real time-offset histograms
 - **Robustness Testing**: Evaluate performance under noise and pitch shifts
 
 ### Q3B: Signals to Software (Interactive App)
 - Built with **Streamlit** for easy interaction
-- **Three main tabs**:
-  1. **Build Database**: Upload songs and create fingerprint database
-  2. **Query & Identify**: Upload a clip and identify matching song
-  3. **Analysis & Insights**: Understand how the system works
+- Ships with a pre-built, pre-indexed database so it works immediately — no manual upload/build step
+- **Four main tabs**:
+  1. **Build Database**: Pre-loaded on startup; optionally add/rebuild from your own files (.wav or .mp3)
+  2. **Query & Identify**: Upload a clip and identify the matching song, with spectrogram/constellation/offset-histogram visuals
+  3. **Batch Mode**: Upload multiple clips and get a `results.csv` (`filename,prediction`)
+  4. **Analysis & Insights**: Understand how the system works
 
 ## Key Features
 
@@ -52,10 +69,13 @@ This project implements a complete music identification pipeline inspired by Sha
 ## Installation
 
 ```bash
-# Clone or navigate to the repo
-cd /workspaces/EE200
+# Clone the repo
+git clone https://github.com/aashishr24/EE200-Sonic-Signatures.git
+cd EE200-Sonic-Signatures
 
-# Install dependencies
+# Install dependencies (ffmpeg is required for MP3 support -
+# on Debian/Ubuntu: apt install ffmpeg; already handled automatically
+# on Streamlit Cloud via packages.txt)
 pip install -r requirements.txt
 ```
 
@@ -66,28 +86,30 @@ pip install -r requirements.txt
 streamlit run ss.py
 ```
 
-The app will open at `http://localhost:8501`
+The app will open at `http://localhost:8501` with the pre-built `song_database.pkl`
+(50 songs) already loaded — no setup needed.
 
 ### Workflow
 
-**Step 1: Build Database**
-- Navigate to "Build Database" tab
-- Upload .wav files for songs you want to identify
-- Click "Build Database" to create fingerprint index
-- View statistics (songs, total fingerprints, avg per song)
+**Step 1: Song Database**
+- Already loaded on startup from `song_database.pkl`
+- Optionally upload your own `.wav`/`.mp3` files in "Add / Rebuild From Your Own Files"
 
 **Step 2: Identify a Song**
 - Go to "Query & Identify" tab
-- Upload a query .wav clip (can be from any song in database)
+- Upload a query `.wav` or `.mp3` clip
 - Click "Identify Song"
 - View:
   - **Spectrogram**: Time-frequency representation
   - **Constellation**: Peak locations overlaid
-  - **Results**: Best match with confidence score
-  - **Offset Histogram**: Shows alignment quality
-  - **Score Table**: Comparison with all database songs
+  - **Offset Histogram**: Real time-alignment histogram — sharp spike for a correct match, scattered for a wrong one
+  - **Results**: Best match with confidence score, and a table comparing all database songs
 
-**Step 3: Understand the System**
+**Step 3: Batch Mode**
+- Upload multiple clips at once
+- Download `results.csv` (`filename,prediction`)
+
+**Step 4: Understand the System**
 - Read "Analysis & Insights" tab for:
   - Time vs frequency resolution tradeoff
   - Why peak pairs beat single peaks
@@ -118,12 +140,14 @@ Peak Threshold: 10 dB above background
 ```
 
 ### Matching Algorithm
-1. Extract fingerprints from query audio
-2. Hash each fingerprint
-3. Look up hashes in database
-4. Count matches and build offset histogram
-5. Peak offset indicates correct alignment
-6. Score = number of matching fingerprints
+1. Extract fingerprints from query audio, each tagged with its real timestamp
+2. Hash each fingerprint and look it up in the database
+3. For every hash match, compute the time offset: `db_time - query_time`
+4. Bucket these offsets into a histogram
+5. **Score = height of the tallest bin** — i.e. how many fingerprints agree
+   on one consistent alignment, not just the total number of collisions.
+   A true match produces one sharp spike at the correct offset; a wrong
+   song produces small, scattered bars across many offsets.
 
 ## Observations & Analysis
 
@@ -154,14 +178,13 @@ Peak Pairs:
 
 ### Robustness Issues
 
-**Handles Well:**
-- Background noise (SNR > 10 dB)
+**Handles Well (measured on the real 50-song database):**
+- Background noise: correct identification down to **0 dB SNR**
 - Volume changes
 - Small tempo variations
 
 **Fails Against:**
-- Pitch shifts (even ±2% fails!)
-- Audio compression (MP3 artifacts)
+- Pitch shifts (even ±1-2% noticeably weakens the match, ±5% fails)
 - Significant time stretching
 
 **Why Pitch Shifts Fail:**
@@ -261,42 +284,11 @@ results = fingerprinter.match_query(query_audio, query_sr, database)
 - **matplotlib**: Visualization
 - **pandas**: Data handling
 - **seaborn**: Enhanced visualization
-
-## Notes for Report
-
-Your report should include:
-
-1. **Spectrograms**
-   - Full song spectrogram (showing all frequencies)
-   - Comparison of short vs long window sizes
-   - Analysis of time vs frequency resolution tradeoff
-
-2. **Constellation Plots**
-   - Spectrogram with peak overlay
-   - Show how peaks form the fingerprint
-
-3. **Matching Results**
-   - Database song spectra/constellations
-   - Query clip matching to best match
-   - Offset histogram showing alignment
-
-4. **Comparison: Pairs vs Singles**
-   - Side-by-side results from same query
-   - Explanation of why pairs are more decisive
-
-5. **Robustness Experiments**
-   - Noise test: SNR vs recognition success
-   - Pitch shift test: percentage change vs success
-   - Written analysis of what you observe
-
-6. **Explanations**
-   - Why pitch shifts defeat the system
-   - Why spectrogram gives time information while DFT doesn't
-   - Why peak pairs are superior to single peaks
-   - Proposed improvement and its advantages
+- **pydub** (+ **ffmpeg**): MP3/compressed audio decoding
 
 - Python 3.8+
-- See requirements.txt for all dependencies
+- See `requirements.txt` for all dependencies, `FIXES.md` for the full
+  changelog of bugs found and fixed since the original implementation.
 
 ## License
 
