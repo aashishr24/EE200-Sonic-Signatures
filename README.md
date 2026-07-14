@@ -226,20 +226,25 @@ Peak Pairs:
 
 ```
 .
-├── project.py          # Core MusicFingerprinter class
-│                       # - Spectrogram computation
-│                       # - Peak detection
-│                       # - Fingerprint creation
-│                       # - Database building
-│                       # - Query matching
-│                       # - Robustness testing
-├── ss.py               # Streamlit interactive app
-│                       # - Database builder UI
-│                       # - Query interface
-│                       # - Visualization
-│                       # - Analysis tab
-├── requirements.txt    # Python dependencies
-└── README.md          # This file
+├── project.py            # Core MusicFingerprinter class
+│                          # - Spectrogram computation, peak detection
+│                          # - Fingerprint creation (pairs + singles)
+│                          # - Database building, query matching (real
+│                          #   time-offset histogram), robustness testing
+├── ss.py                  # Streamlit interactive app (single-clip + batch mode)
+├── db_loader.py           # Auto-loads the pre-built database on app startup
+├── song_database.pkl      # Pre-built fingerprint database (50 songs)
+├── songs/                 # Original song library (as provided, unrenamed)
+├── build_database.py      # Standalone CLI script to (re)build the database
+├── convert_to_wav.py      # Utility: batch-convert audio to .wav
+├── demo.py / run_analysis.py / fast_analysis.py /
+│   minimal_analysis.py / ultra_fast_analysis.py
+│                          # Report-figure/analysis generation scripts
+├── requirements.txt       # Python dependencies
+├── packages.txt           # System packages (ffmpeg, for Streamlit Cloud)
+├── FIXES.md               # Changelog of bugs found and fixed
+├── Q3A_REPORT.md          # Full technical writeup (Q3A)
+└── README.md              # This file
 ```
 
 ## API Reference

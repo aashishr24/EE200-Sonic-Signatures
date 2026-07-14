@@ -2,7 +2,15 @@
 
 **Course:** EE200  
 **Assignment:** Q3(A) - Spectral Analysis and Fingerprinting  
-**Date:** June 24, 2026  
+**Date:** June 24, 2026 (updated July 2026 — see note below)
+
+> **Update note:** the original matching implementation had a bug where the
+> time-alignment offset between a query and a database song was hardcoded
+> to zero instead of actually computed, which silently broke the
+> offset-histogram voting described in Section 3.2 below — the algorithm
+> was really just counting raw hash collisions. This report has been
+> updated to reflect the fixed implementation and real measured results.
+> Full before/after details: [`FIXES.md`](FIXES.md).
 
 ---
 
@@ -12,7 +20,9 @@ This report presents the implementation and analysis of a Shazam-like music fing
 
 **Key Findings:**
 - Peak-pair fingerprints (frequency₁, frequency₂, time_gap) provide highly selective matching
-- System is robust to noise up to SNR ~10dB but fails completely on pitch shifts
+- Scoring by the tallest bin of a real time-offset histogram (not just total hash
+  collisions) makes the system robust to noise down to **0 dB SNR**, measured
+  on the real 50-song database, before pitch shifts remain the dominant failure mode
 - FFT size of 4096 samples provides optimal frequency resolution without sacrificing time alignment
 
 ---
@@ -147,7 +157,13 @@ Where:
 | 5 dB | Heavy grain | ~50% peak loss | ⚠️ Degraded |
 | 0 dB | Mostly noise | Few valid peaks | ❌ Fails |
 
-**Observation:** System maintains functionality up to SNR ~10 dB (typical background noise level). Beyond that, peak-pair fingerprints become too sparse for reliable matching.
+**Observation:** Peak detection quality itself degrades progressively as shown
+in the table above. However, because the *matching* score is the tallest bin
+of a real time-offset histogram (many fingerprints voting on one consistent
+alignment) rather than a raw hash-collision count, matching accuracy degrades
+far more gracefully than peak detection alone would suggest: identification
+remained correct down to **0 dB SNR** in repeated trials on the real 50-song
+database, only becoming unreliable around -3 to -5 dB.
 
 **Visualization:** See `Q3A_noise_robustness.png` showing spectrograms at different noise levels
 
@@ -224,11 +240,15 @@ Database Indexing:      O(N_fingerprints × log(database_size))
 
 **Query Processing:**
 ```
-1. Extract query fingerprints:  ~100-200 pairs (short clip)
+1. Extract query fingerprints:  ~100-200 pairs (short clip), each tagged
+                                 with its real timestamp
 2. Hash lookup in database:     O(1) average per fingerprint
-3. Vote on time offsets:        Build histogram of aligned peaks
-4. Find peak offset:            Most common alignment indicates match
-5. Score calculation:           Percentage of query peaks matching
+3. Vote on time offsets:        For every hash match, compute
+                                 offset = db_time - query_time and bin it
+4. Find peak offset:            The tallest histogram bin is the score;
+                                 a true match produces one sharp spike,
+                                 a wrong song produces scattered small bars
+5. Score calculation:           Height of the tallest offset-histogram bin
 ```
 
 **Matching Time:** ~100 ms per query (very fast)
@@ -310,22 +330,21 @@ def fingerprint_hash(f1_quantized, f2_quantized, delta_t_quantized):
 5. ✅ Minimal storage requirements (~2MB for 51 songs)
 
 ### Performance Summary
-- **Database:** 51 songs, ~2,500 fingerprints per song
-- **Accuracy:** ~95% on clean audio, ~80% at SNR 10dB
-- **Speed:** <100ms per query match
-- **Memory:** <10MB total (database + code)
+- **Database:** 50 songs, ~40,000 fingerprints per song on average
+- **Accuracy:** correct identification down to 0 dB SNR on real audio (measured, repeated trials); degrades sharply on pitch shifts of even ±1-2%
+- **Speed:** <1s per query match against the full 50-song database
+- **Memory:** ~37MB pre-built fingerprint database
 
 ### When This System Works Best
-- ✅ Clean audio (SNR > 20dB)
+- ✅ Noisy audio, down to and including 0 dB SNR
 - ✅ Original pitch and tempo
 - ✅ Real-time identification
 - ✅ Large-scale databases
 
 ### When This System Struggles
-- ❌ Pitch-shifted music
+- ❌ Pitch-shifted music (even small shifts)
 - ❌ Heavily time-stretched audio
-- ❌ Extreme noise (SNR < 5dB)
-- ❌ Heavily compressed files
+- ❌ Extreme noise (SNR below roughly -3 to -5 dB)
 
 ---
 
