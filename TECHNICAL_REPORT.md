@@ -1,8 +1,7 @@
-# Q3(A): Sonic Signatures - Music Fingerprinting Analysis Report
+# Sonic Signatures: Music Fingerprinting Analysis Report
 
-**Course:** EE200  
-**Assignment:** Q3(A) - Spectral Analysis and Fingerprinting  
-**Date:** June 24, 2026 (updated July 2026 — see note below)
+**Project:** Spectral Analysis and Audio Fingerprinting  
+**Date:** June 2026 (updated July 2026 — see note below)
 
 > **Update note:** the original matching implementation had a bug where the
 > time-alignment offset between a query and a database song was hardcoded
@@ -43,7 +42,7 @@ This report presents the implementation and analysis of a Shazam-like music fing
 - **Hop length 512:** Creates 23 ms frames, suitable for music signal dynamics
 - **Frequency range:** Discards inaudible frequencies (<40 Hz) and high-frequency noise (>8,000 Hz)
 
-**Visualization:** See `Q3A_spectrograms.png` showing spectrograms of "Hey Jude" and "Yesterday"
+**Visualization:** See `spectrograms.png` showing spectrograms of "Hey Jude" and "Yesterday"
 
 ---
 
@@ -66,7 +65,7 @@ This report presents the implementation and analysis of a Shazam-like music fing
 
 **Results:** ~400 peaks detected per 30-second segment
 
-**Visualization:** See `Q3A_constellation.png` showing detected peaks overlaid on spectrograms
+**Visualization:** See `constellation.png` showing detected peaks overlaid on spectrograms
 
 ---
 
@@ -165,7 +164,7 @@ far more gracefully than peak detection alone would suggest: identification
 remained correct down to **0 dB SNR** in repeated trials on the real 50-song
 database, only becoming unreliable around -3 to -5 dB.
 
-**Visualization:** See `Q3A_noise_robustness.png` showing spectrograms at different noise levels
+**Visualization:** See `noise_robustness.png` showing spectrograms at different noise levels
 
 ---
 
@@ -199,7 +198,7 @@ database, only becoming unreliable around -3 to -5 dB.
 
 This is the main limitation of frequency-based fingerprinting.
 
-**Visualization:** See `Q3A_pitch_robustness.png` showing spectrograms at different pitch shifts
+**Visualization:** See `pitch_robustness.png` showing spectrograms at different pitch shifts
 
 ---
 
@@ -360,35 +359,34 @@ def fingerprint_hash(f1_quantized, f2_quantized, delta_t_quantized):
 
 ## Appendix: Visualization Guide
 
-### Q3A_spectrograms.png
+### spectrograms.png
 - **X-axis:** Time (seconds)
 - **Y-axis:** Frequency (Hz)
 - **Color:** Magnitude (dB)
 - **Shows:** Time-frequency content of two reference songs
 
-### Q3A_constellation.png
+### constellation.png
 - **Red X marks:** Detected spectral peaks
 - **Spacing:** Represents unique fingerprint patterns
 - **Shows:** Algorithm's peak detection quality
 
-### Q3A_analysis_metrics.png
+### analysis_metrics.png
 - **Panel 1:** Frame energy over time (loudness envelope)
 - **Panel 2:** Average frequency content (spectral tilt)
 - **Panel 3:** Waveform overlay of both songs
 - **Panel 4:** Summary statistics (RMS, peak, crest factor)
 
-### Q3A_noise_robustness.png
+### noise_robustness.png
 - **Four subplots:** SNR levels 20, 10, 5, 0 dB
 - **Progressive degradation:** Shows noise limit
 - **Takeaway:** System works well until SNR drops below 5dB
 
-### Q3A_pitch_robustness.png
+### pitch_robustness.png
 - **Four subplots:** Pitch shifts -5, -2, 0, +2 semitones
 - **Frequency shifts:** All peaks shift uniformly
 - **Takeaway:** Complete mismatch even at ±2 semitones
 
 ---
 
-**Report prepared:** June 24, 2026  
-**Implementation:** Python 3, scipy, librosa, numpy, matplotlib  
-**Code availability:** GitHub repository (aashishr24/EE200)
+**Implementation:** Python 3, scipy, numpy, matplotlib, pydub  
+**Code & live demo:** [github.com/aashishr24/EE200-Sonic-Signatures](https://github.com/aashishr24/EE200-Sonic-Signatures) · [musicashish.streamlit.app](https://musicashish.streamlit.app)

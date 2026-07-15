@@ -1,4 +1,4 @@
-# EE200 - Music Identifier: Sonic Signatures
+# Sonic Signatures — Music Identifier
 
 A Shazam-like music identification system that uses spectral fingerprints to identify songs from audio clips.
 
@@ -21,7 +21,7 @@ A Shazam-like music identification system that uses spectral fingerprints to ide
 
 This project implements a complete music identification pipeline inspired by Shazam's technology:
 
-### Q3A: Sonic Signatures (Core Algorithm)
+### Core Algorithm: Spectral Fingerprinting
 - **Spectrogram Analysis**: Convert time-domain audio to time-frequency representation
 - **Peak Detection**: Extract distinctive frequency peaks from spectrograms  
 - **Fingerprinting**: Create robust fingerprints using:
@@ -30,7 +30,7 @@ This project implements a complete music identification pipeline inspired by Sha
 - **Database Matching**: Store fingerprints and match query clips using real time-offset histograms
 - **Robustness Testing**: Evaluate performance under noise and pitch shifts
 
-### Q3B: Signals to Software (Interactive App)
+### Interactive App
 - Built with **Streamlit** for easy interaction
 - Ships with a pre-built, pre-indexed database so it works immediately — no manual upload/build step
 - **Four main tabs**:
@@ -243,7 +243,7 @@ Peak Pairs:
 ├── requirements.txt       # Python dependencies
 ├── packages.txt           # System packages (ffmpeg, for Streamlit Cloud)
 ├── FIXES.md               # Changelog of bugs found and fixed
-├── Q3A_REPORT.md          # Full technical writeup (Q3A)
+├── TECHNICAL_REPORT.md    # Full technical writeup
 └── README.md              # This file
 ```
 
