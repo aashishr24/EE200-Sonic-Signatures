@@ -71,7 +71,17 @@ with tab1:
         st.divider()
 
     st.subheader("Add / Rebuild From Your Own Files (optional)")
-    st.write("Upload audio files (.wav or .mp3) to add to, or rebuild, the fingerprint database.")
+    st.write("Upload audio files (.wav or .mp3) to add to the fingerprint database.")
+    st.warning(
+        "⚠️ **The 50-song library above is already loaded — you don't need to "
+        "upload it again.** This section is only for adding a *few extra* "
+        "songs. Uploading many files at once (10+) re-processes each one from "
+        "scratch (spectrogram + peak detection), which can take several "
+        "minutes and may exceed Streamlit Community Cloud's free-tier "
+        "memory/time limits, crashing the app. If that happens, just reboot "
+        "the app — the pre-built database reloads automatically, no re-upload "
+        "needed."
+    )
 
     # File upload
     uploaded_files = st.file_uploader(
@@ -81,8 +91,23 @@ with tab1:
         help="Select one or more .wav/.mp3 files to add to the database"
     )
 
+    # Guard against accidentally re-processing a large batch (e.g. the full
+    # song library) in one go, which is what actually crashes the free tier.
+    LARGE_UPLOAD_THRESHOLD = 8
+    proceed = True
+    if uploaded_files and len(uploaded_files) > LARGE_UPLOAD_THRESHOLD:
+        st.error(
+            f"⚠️ You've selected {len(uploaded_files)} files. Processing that "
+            f"many at once is what's most likely to crash the app on "
+            f"Streamlit Community Cloud's free tier. Confirm below only if "
+            f"you're sure you want to proceed anyway."
+        )
+        proceed = st.checkbox(
+            f"Yes, process all {len(uploaded_files)} files anyway (may be slow or crash)"
+        )
+
     # Create database
-    if uploaded_files:
+    if uploaded_files and proceed:
         if st.button("🔨 Build Database From Uploads", key="build_db"):
             st.info("Building database from uploaded files...")
 
@@ -95,11 +120,11 @@ with tab1:
                 with open(file_path, 'wb') as f:
                     f.write(uploaded_file.getbuffer())
 
-            # Build database
+            # Build fingerprints for the uploaded files
             audio_ext = ('.wav', '.mp3')
             valid_files = [f for f in os.listdir(temp_dir) if f.lower().endswith(audio_ext)]
             progress_bar = st.progress(0)
-            database = {}
+            new_entries = {}
 
             for idx, filename in enumerate(valid_files):
                 filepath = os.path.join(temp_dir, filename)
@@ -118,21 +143,26 @@ with tab1:
                     # Build hash map, storing the REAL anchor time of each
                     # fingerprint occurrence (not a hardcoded placeholder) so
                     # matching can vote on a consistent time offset.
-                    database[song_name] = defaultdict(list)
+                    new_entries[song_name] = defaultdict(list)
                     for fp, anchor_time_sec in fingerprints:
                         fp_hash = hash(fp) % (10 ** 9)
-                        database[song_name][fp_hash].append(anchor_time_sec)
+                        new_entries[song_name][fp_hash].append(anchor_time_sec)
 
-                    database[song_name] = dict(database[song_name])
+                    new_entries[song_name] = dict(new_entries[song_name])
 
                     progress_bar.progress((idx + 1) / len(valid_files))
 
                 except Exception as e:
                     st.error(f"Error processing {song_name}: {e}")
 
+            # ADD to the existing (pre-loaded) database rather than replacing
+            # it outright, matching what this section actually says it does.
+            database = dict(st.session_state.get('database') or {})
+            database.update(new_entries)
+
             st.session_state.database = database
             st.session_state.temp_dir = temp_dir
-            st.success(f"✅ Database built! {len(database)} songs indexed.")
+            st.success(f"✅ Added {len(new_entries)} song(s). Database now has {len(database)} songs total.")
 
             # Display database statistics
             col1, col2, col3 = st.columns(3)
